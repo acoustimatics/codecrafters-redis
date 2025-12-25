@@ -1,5 +1,5 @@
 use std::io;
-use std::io::Write;
+use std::io::prelude::*;
 use std::net;
 
 fn main() {
@@ -27,5 +27,11 @@ fn main() {
 }
 
 fn respond_to_connection(stream: &mut net::TcpStream) -> io::Result<()> {
-    write!(stream, "+PONG\r\n")
+    let mut buffer: [u8; 256] = [0; 256];
+    let mut n_bytes_read = stream.read(&mut buffer)?;
+    while n_bytes_read > 0 {
+        write!(stream, "+PONG\r\n")?;
+        n_bytes_read = stream.read(&mut buffer)?;
+    }
+    Ok(())
 }
