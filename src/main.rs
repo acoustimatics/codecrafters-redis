@@ -1,18 +1,16 @@
 use std::io;
 use std::io::prelude::*;
 use std::net;
+use std::thread;
 
 fn main() {
     match net::TcpListener::bind("127.0.0.1:6379") {
         Ok(listener) => {
             for stream in listener.incoming() {
                 match stream {
-                    Ok(mut stream) => {
+                    Ok(stream) => {
                         println!("accepted new connection");
-                        match respond_to_connection(&mut stream) {
-                            Ok(_) => println!("closed connection"),
-                            Err(e) => eprintln!("error handling connection: {e}"),
-                        }
+                        thread::spawn(move || handle_connection(stream));
                     }
                     Err(e) => {
                         eprintln!("error accepting connection {e}");
@@ -26,7 +24,14 @@ fn main() {
     }
 }
 
-fn respond_to_connection(stream: &mut net::TcpStream) -> io::Result<()> {
+fn handle_connection<T: Read + Write>(stream: T) {
+    match read_respond_loop(stream) {
+        Ok(_) => println!("closed connection"),
+        Err(e) => eprintln!("error handling connection: {e}"),
+    }
+}
+
+fn read_respond_loop<T: Read + Write>(mut stream: T) -> io::Result<()> {
     let mut buffer: [u8; 256] = [0; 256];
     let mut n_bytes_read = stream.read(&mut buffer)?;
     while n_bytes_read > 0 {
