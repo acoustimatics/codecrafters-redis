@@ -4,40 +4,36 @@ use std::io;
 
 use anyhow::anyhow;
 
-/// Represents a Redis object.
-#[derive(Debug, PartialEq)]
-pub enum Object {
-    /// An array of objects.
-    Array(Vec<Box<Object>>),
+use crate::engine;
 
-    /// A bulk string object. Bulk strings may have `\r` or `\n`.
-    BulkString(Vec<u8>),
-}
-
-impl Object {
-    pub fn serialize<T: io::Write>(&self, stream: &mut T) -> io::Result<()> {
-        match self {
-            Object::Array(elements) => {
-                write!(stream, "*{}\r\n", elements.len())?;
-                for e in elements.iter() {
-                    e.serialize(stream)?;
-                }
-                Ok(())
+/// Serializes an object and writes it to a given stream.
+pub fn serialize<T: io::Write>(stream: &mut T, object: &engine::Object) -> io::Result<()> {
+    match object {
+        engine::Object::Array(elements) => {
+            write!(stream, "*{}\r\n", elements.len())?;
+            for e in elements.iter() {
+                serialize(stream, e)?;
             }
-            Object::BulkString(string) => {
-                write!(stream, "${}\r\n", string.len())?;
-                stream.write(&string)?;
-                write!(stream, "\r\n")
-            }
+            Ok(())
+        }
+        engine::Object::BulkString(string) => {
+            write!(stream, "${}\r\n", string.len())?;
+            stream.write(&string)?;
+            write!(stream, "\r\n")
+        }
+        engine::Object::SimpleString(string) => {
+            write!(stream, "+")?;
+            stream.write(&string)?;
+            write!(stream, "\r\n")
         }
     }
 }
 
-/// Deserializes a Redis object.
+/// Deserializes an object read from a given stream.
 pub fn deserialize_object<T: io::Read>(
     state: &mut ReadState,
     stream: &mut T,
-) -> anyhow::Result<Object> {
+) -> anyhow::Result<engine::Object> {
     match state.current(stream)? {
         Some(b'$') => deserialize_bulk_string(state, stream),
         Some(b'*') => deserialize_array(state, stream),
@@ -47,7 +43,7 @@ pub fn deserialize_object<T: io::Read>(
 }
 
 /// Deserializes a Redis array.
-fn deserialize_array<T: io::Read>(input: &mut ReadState, stream: &mut T) -> anyhow::Result<Object> {
+fn deserialize_array<T: io::Read>(input: &mut ReadState, stream: &mut T) -> anyhow::Result<engine::Object> {
     assert_eq!(input.current(stream)?, Some(b'*'));
     input.advance();
     let length = read_digits(input, stream)?;
@@ -58,14 +54,14 @@ fn deserialize_array<T: io::Read>(input: &mut ReadState, stream: &mut T) -> anyh
         let element = deserialize_object(input, stream)?;
         elements.push(Box::new(element));
     }
-    Ok(Object::Array(elements))
+    Ok(engine::Object::Array(elements))
 }
 
 /// Deserializes a Redis bulk string.
 fn deserialize_bulk_string<T: io::Read>(
     input: &mut ReadState,
     stream: &mut T,
-) -> anyhow::Result<Object> {
+) -> anyhow::Result<engine::Object> {
     assert_eq!(input.current(stream)?, Some(b'$'));
     input.advance();
     let length = read_digits(input, stream)?;
@@ -80,9 +76,10 @@ fn deserialize_bulk_string<T: io::Read>(
         input.advance();
     }
     expect_delimiter(input, stream)?;
-    Ok(Object::BulkString(string))
+    Ok(engine::Object::BulkString(string))
 }
 
+/// Read from stream ASCII digits, putting them into a `String`.
 fn read_digits<T: io::Read>(input: &mut ReadState, stream: &mut T) -> anyhow::Result<String> {
     let mut result = String::new();
     while let Some(b) = input.current(stream)?.filter(|b| is_digit(*b)) {
@@ -127,16 +124,27 @@ fn is_digit(b: u8) -> bool {
     b'0' <= b && b <= b'9'
 }
 
-fn _display_byte(b: u8) {
+#[allow(unused)]
+pub fn display_byte(b: u8) {
     match b {
-        0x0A => print!("LF"),
-        0x0D => print!("CR"),
-        0x20 => print!("SP"),
+        0x0A => print!("\\n"),
+        0x0D => print!("\\r"),
         b if b < 0x20 => print!("{:x}", b),
         b => print!("{}", b as char),
     }
 }
 
+#[allow(unused)]
+pub fn display_byte_slice(bs: &[u8]) {
+    for b in bs.iter() {
+        display_byte(*b);
+    }
+}
+
+/// Holds a bufferred read of a stream. Allows client code to go through the
+/// bytes of a stream one at a time without taking ownership of the stream.
+/// The only other way to iterate over bytes in a stream took complete
+/// ownership which made it so you could never write a response to the stream.
 pub struct ReadState {
     /// Bytes that have been read.
     buffer: [u8; 1024],
@@ -161,10 +169,15 @@ impl ReadState {
         }
     }
 
+    /// Advance where the current byte is in the buffer.
     pub fn advance(&mut self) {
         self.offset += 1;
     }
 
+    /// Get the current char in the buffer, if there is one. This may read
+    /// from the stream if the buffer is empty or has all ben read. If a read
+    /// returned zero bytes, then `can_read_more` will be set to false, no
+    /// reads will happen, and current will return None.
     pub fn current<T: io::Read>(&mut self, stream: &mut T) -> io::Result<Option<u8>> {
         if self.offset < self.length {
             Ok(Some(self.buffer[self.offset]))
@@ -176,10 +189,18 @@ impl ReadState {
         }
     }
 
+    /// Helper method to read from the stream into the buffer.
     fn read_more<T: io::Read>(&mut self, stream: &mut T) -> io::Result<()> {
         self.length = stream.read(&mut self.buffer)?;
         self.can_read_more = self.length > 0;
         self.offset = 0;
+
+        print!("read {} bytes: ", self.length);
+        for i in 0..self.length {
+            display_byte(self.buffer[i]);
+        }
+        println!();
+
         Ok(())
     }
 }
