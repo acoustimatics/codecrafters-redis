@@ -16,10 +16,13 @@ pub fn serialize<T: io::Write>(stream: &mut T, object: &engine::Object) -> io::R
             }
             Ok(())
         }
-        engine::Object::BulkString(string) => {
+        engine::Object::BulkString(Some(string)) => {
             write!(stream, "${}\r\n", string.len())?;
             stream.write(&string)?;
             write!(stream, "\r\n")
+        }
+        engine::Object::BulkString(None) => {
+            write!(stream, "$-1\r\n")
         }
         engine::Object::Error(message) => {
             write!(stream, "-")?;
@@ -72,6 +75,7 @@ fn deserialize_bulk_string<T: io::Read>(
 ) -> anyhow::Result<engine::Object> {
     assert_eq!(input.current(stream)?, Some(b'$'));
     input.advance();
+    // TODO: Support null bulk strings that look like `$-1\r\n`.
     let length = read_digits(input, stream)?;
     let length = parse_u32(&length)?;
     expect_delimiter(input, stream)?;
@@ -84,7 +88,7 @@ fn deserialize_bulk_string<T: io::Read>(
         input.advance();
     }
     expect_delimiter(input, stream)?;
-    Ok(engine::Object::BulkString(string))
+    Ok(engine::Object::BulkString(Some(string)))
 }
 
 /// Read from stream ASCII digits, putting them into a `String`.

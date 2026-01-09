@@ -100,6 +100,8 @@ fn read_request_respond_loop<T: io::Read + io::Write>(
 
 /// `fn` run in the engine thread.
 fn run_engine(rx_req: Receiver<Request>) {
+    // Create the engine object.
+    let mut engine = engine::Engine::new();
     // A map of senders to send responses to.
     let mut senders = HashMap::new();
     // Start request processing loop.
@@ -107,7 +109,7 @@ fn run_engine(rx_req: Receiver<Request>) {
         // Handle the request.
         let res = match req.value {
             RequestValue::Command(object) => {
-                let res = engine::do_command(object);
+                let res = engine.do_command(object);
                 Response::Return(res)
             }
             RequestValue::Sender(tx_res) => {
