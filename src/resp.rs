@@ -21,6 +21,11 @@ pub fn serialize<T: io::Write>(stream: &mut T, object: &engine::Object) -> io::R
             stream.write(&string)?;
             write!(stream, "\r\n")
         }
+        engine::Object::Error(message) => {
+            write!(stream, "-")?;
+            stream.write(&message)?;
+            write!(stream, "\r\n")
+        }
         engine::Object::SimpleString(string) => {
             write!(stream, "+")?;
             stream.write(&string)?;
@@ -42,8 +47,11 @@ pub fn deserialize_object<T: io::Read>(
     }
 }
 
-/// Deserializes a Redis array.
-fn deserialize_array<T: io::Read>(input: &mut ReadState, stream: &mut T) -> anyhow::Result<engine::Object> {
+/// Deserializes an array object.
+fn deserialize_array<T: io::Read>(
+    input: &mut ReadState,
+    stream: &mut T,
+) -> anyhow::Result<engine::Object> {
     assert_eq!(input.current(stream)?, Some(b'*'));
     input.advance();
     let length = read_digits(input, stream)?;
@@ -57,7 +65,7 @@ fn deserialize_array<T: io::Read>(input: &mut ReadState, stream: &mut T) -> anyh
     Ok(engine::Object::Array(elements))
 }
 
-/// Deserializes a Redis bulk string.
+/// Deserializes a bulk string object.
 fn deserialize_bulk_string<T: io::Read>(
     input: &mut ReadState,
     stream: &mut T,
@@ -124,6 +132,7 @@ fn is_digit(b: u8) -> bool {
     b'0' <= b && b <= b'9'
 }
 
+/// Attempts to print the byte as an ASCII character.
 #[allow(unused)]
 pub fn display_byte(b: u8) {
     match b {
@@ -134,6 +143,7 @@ pub fn display_byte(b: u8) {
     }
 }
 
+/// Attempts to print a byte slice as ASCII characters.
 #[allow(unused)]
 pub fn display_byte_slice(bs: &[u8]) {
     for b in bs.iter() {

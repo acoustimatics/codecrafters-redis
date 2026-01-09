@@ -1,25 +1,33 @@
-#![allow(unused)]
+//! Code Crafters build a Redis challenge
 
 mod engine;
 mod resp;
 
-use std::collections::VecDeque;
+use std::collections::HashMap;
 use std::io;
 use std::net;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 use std::thread;
-
-use anyhow::anyhow;
 
 fn main() {
     let mut connection_id = 0;
     match net::TcpListener::bind("127.0.0.1:6379") {
         Ok(listener) => {
+            // Create channels to make requests of the engine.
+            let (tx_req, rx_req) = mpsc::channel();
+            // Start up a thread running the data engine.
+            thread::spawn(move || {
+                run_engine(rx_req);
+            });
+            // Start listening for incomming connections.
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
                         connection_id += 1;
                         println!("[id={connection_id}] accepted new connection");
-                        thread::spawn(move || handle_connection(connection_id, stream));
+                        let tx_req = tx_req.clone();
+                        thread::spawn(move || handle_connection(connection_id, stream, tx_req));
                     }
                     Err(e) => {
                         eprintln!("error accepting connection {e}");
@@ -33,72 +41,142 @@ fn main() {
     }
 }
 
-fn handle_connection<T: io::Read + io::Write>(id: usize, stream: T) {
-    match read_respond_loop(id, stream) {
+/// Handles all the interactions for a connection.
+fn handle_connection<T: io::Read + io::Write>(
+    id: ConnectionId,
+    stream: T,
+    tx_req: mpsc::Sender<Request>,
+) {
+    // Tell engine where to send responses.
+    let (tx_res, rx_res) = mpsc::channel();
+    let req = Request::new_sender(id, tx_res);
+    if let Err(e) = tx_req.send(req) {
+        eprintln!("{e}");
+        return;
+    }
+    // TODO: Check the response.
+    if let Err(e) = rx_res.recv() {
+        eprintln!("{e}");
+        return;
+    }
+
+    match read_request_respond_loop(id, stream, &tx_req, &rx_res) {
         Ok(_) => println!("[id={id}] closed connection"),
         Err(e) => eprintln!("{e}"),
     }
+
+    let req = Request::new_done(id);
+    if let Err(e) = tx_req.send(req) {
+        eprintln!("{e}");
+        return;
+    }
+    // TODO: Check the response.
+    if let Err(e) = rx_res.recv() {
+        eprintln!("{e}");
+        return;
+    }
 }
 
-fn read_respond_loop<T: io::Read + io::Write>(id: usize, mut stream: T) -> anyhow::Result<()> {
+/// Goes into a loop of reading commands from the client, requesting the
+/// engine do the command, and then sending the result back to the client.
+fn read_request_respond_loop<T: io::Read + io::Write>(
+    id: ConnectionId,
+    mut stream: T,
+    tx_req: &mpsc::Sender<Request>,
+    rx_res: &mpsc::Receiver<Response>,
+) -> anyhow::Result<()> {
     let mut read_state = resp::ReadState::new();
     while read_state.can_read_more {
-        let object = resp::deserialize_object(&mut read_state, &mut stream)?;
-        match do_command(object, &mut stream) {
-            Ok(()) => (),
-            Err(e) => {
-                eprintln!("[id={id}] error: {e}");
-                write!(stream, "-{e}\r\n");
-            },
+        let command = resp::deserialize_object(&mut read_state, &mut stream)?;
+        let req = Request::new_command(id, command);
+        tx_req.send(req)?;
+        match rx_res.recv()? {
+            Response::Ok => write!(stream, "+OK\r\n")?,
+            Response::Return(res) => resp::serialize(&mut stream, &res)?,
         }
     }
     Ok(())
 }
 
-fn do_command<T: io::Write>(object: engine::Object, stream: &mut T) -> anyhow::Result<()> {
-    let engine::Object::Array(elements) = object else {
-        return Err(anyhow!("expected an non-empty array"));
-    };
-
-    let mut elements = VecDeque::from(elements);
-
-    let Some(command) = elements.pop_front() else {
-      return Err(anyhow!("expected an non-empty array"));
-    };
-
-    let engine::Object::BulkString(mut command) = *command else {
-        return Err(anyhow!("expected first element to be a bulk string"));
-    };
-
-    for i in 0..command.len() {
-        command[i] = command[i].to_ascii_uppercase();
-    }
-
-    match command.as_slice() {
-        b"PING" => {
-            let pong = engine::Object::new_simple_string(b"PONG");
-            resp::serialize(stream, &pong)?;
-            Ok(())
+/// `fn` run in the engine thread.
+fn run_engine(rx_req: Receiver<Request>) {
+    // A map of senders to send responses to.
+    let mut senders = HashMap::new();
+    // Start request processing loop.
+    for req in rx_req {
+        // Handle the request.
+        let res = match req.value {
+            RequestValue::Command(object) => {
+                let res = engine::do_command(object);
+                Response::Return(res)
+            }
+            RequestValue::Sender(tx_res) => {
+                senders.insert(req.id, tx_res);
+                Response::Ok
+            }
+            RequestValue::Done => {
+                let _ = senders.remove(&req.id);
+                Response::Ok
+            }
+        };
+        // Try to respond to the request.
+        if let Some(tx_res) = senders.get(&req.id) {
+            if let Err(e) = tx_res.send(res) {
+                // TODO: Do more in response to the error?
+                eprintln!("error responding to request: {e}");
+            }
         }
-        b"ECHO" => do_echo(&mut elements, stream),
-        _ => Err(anyhow!("unknown command")),
     }
 }
 
-fn do_echo<T: io::Write>(elements: &mut VecDeque<Box<engine::Object>>, stream: &mut T) -> anyhow::Result<()> {
-    let Some(arg) = elements.pop_front() else {
-        return Err(anyhow!("ECHO requires an argument"));
-    };
+/// A request to make of the engine thread.
+struct Request {
+    /// Id of connection making the request.
+    id: ConnectionId,
 
-    if !elements.is_empty() {
-        return Err(anyhow!("ECHO requires exactly one argument"));
-    }
-    
-    if matches!(&*arg, engine::Object::BulkString(_)) {
-        resp::serialize(stream, &*arg)?;
-    } else {
-        return Err(anyhow!("ECHO requires a bulk string argument"));
-    }
-
-    Ok(())
+    /// The content of the request.
+    value: RequestValue,
 }
+
+impl Request {
+    /// Creates a new command request.
+    fn new_command(id: ConnectionId, command: engine::Object) -> Self {
+        let value = RequestValue::Command(command);
+        Self { id, value }
+    }
+
+    /// Creates a new sender request.
+    fn new_sender(id: ConnectionId, sender: mpsc::Sender<Response>) -> Self {
+        let value = RequestValue::Sender(sender);
+        Self { id, value }
+    }
+
+    /// Creates a new done request.
+    fn new_done(id: ConnectionId) -> Self {
+        let value = RequestValue::Done;
+        Self { id, value }
+    }
+}
+
+/// Content of a request.
+enum RequestValue {
+    /// Send a command to the engine.
+    Command(engine::Object),
+    /// Gives the engine thread a channel on which responses can be
+    /// sent to a connection.
+    Sender(mpsc::Sender<Response>),
+    /// Tells the engine thread the connection is done so the engine
+    /// thread can drop resources.
+    Done,
+}
+
+/// A response returned for a request to the engine thread.
+enum Response {
+    /// A generic OK.
+    Ok,
+    /// An object to return back to a connection's client.
+    Return(engine::Object),
+}
+
+/// An ID assigned to a connection.
+type ConnectionId = usize;
