@@ -4,14 +4,14 @@ use std::io;
 
 use anyhow::anyhow;
 
-use crate::engine;
+use crate::engine::{self, ObjectArray};
 
 /// Serializes an object and writes it to a given stream.
 pub fn serialize<T: io::Write>(stream: &mut T, object: &engine::Object) -> io::Result<()> {
     match object {
         engine::Object::Array(elements) => {
-            write!(stream, "*{}\r\n", elements.len())?;
-            for e in elements.iter() {
+            write!(stream, "*{}\r\n", elements.items.len())?;
+            for e in elements.items.iter() {
                 serialize(stream, e)?;
             }
             Ok(())
@@ -60,12 +60,13 @@ fn deserialize_array<T: io::Read>(
     let length = read_digits(input, stream)?;
     let length = parse_u32(&length)?;
     expect_delimiter(input, stream)?;
-    let mut elements = Vec::new();
+    let mut items = Vec::new();
     for _ in 0..length {
         let element = deserialize_object(input, stream)?;
-        elements.push(Box::new(element));
+        items.push(element);
     }
-    Ok(engine::Object::Array(elements))
+    let array = ObjectArray { items };
+    Ok(engine::Object::Array(array))
 }
 
 /// Deserializes a bulk string object.
