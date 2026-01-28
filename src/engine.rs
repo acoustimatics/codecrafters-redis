@@ -15,11 +15,20 @@ pub enum Object {
     /// An error with a message.
     Error(Vec<u8>), // TODO: Confirm somehow this doesn't have `\r\n`?
 
+    Integer(i64),
+
     /// A simple string object. May not have `\r\n`.
     SimpleString(Vec<u8>), // TODO: Confirm somehow this doesn't have `\r\n`?
 }
 
 impl Object {
+    /// Create a new array object from a vector.
+    pub fn new_array() -> Self {
+        let items = Vec::new();
+        let array = ObjectArray { items };
+        Object::Array(array)
+    }
+
     /// Create a new error object from a byte slice.
     pub fn new_error(message: &[u8]) -> Self {
         let message = Vec::from(message);
@@ -110,9 +119,31 @@ impl Engine {
             b"GET" => self.do_get(elements),
             b"PING" => Object::new_simple_string(b"PONG"),
             b"ECHO" => self.do_echo(elements),
+            b"RPUSH" => self.do_rpush(elements),
             b"SET" => self.do_set(elements),
             _ => Object::new_error(b"unknown command"),
         }
+    }
+
+    fn do_rpush(&mut self, mut elements: VecDeque<Object>) -> Object {
+        let Some(key) = elements.pop_front() else {
+            return Object::new_error(b"RPUSH requires a key argument");
+        };
+
+        let Some(element) = elements.pop_front() else {
+            return Object::new_error(b"RPUSH requires an element argument");
+        };
+
+        let entry = self.data.entry(key)
+            .or_insert(EntryBuilder::new(Object::new_array()).build());
+
+        let Object::Array(array) = &mut entry.value  else {
+            return Object::new_error(b"object at key is not an array");
+        };
+
+        array.items.push(element);
+
+        Object::Integer(array.items.len() as i64)
     }
 
     /// Do an echo command. This returns the arguments as is back to the client.

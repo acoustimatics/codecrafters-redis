@@ -16,6 +16,9 @@ pub fn serialize<T: io::Write>(stream: &mut T, object: &engine::Object) -> io::R
             }
             Ok(())
         }
+        engine::Object::Integer(i) => {
+            write!(stream, ":{i}\r\n")
+        }
         engine::Object::BulkString(Some(string)) => {
             write!(stream, "${}\r\n", string.len())?;
             stream.write(&string)?;
