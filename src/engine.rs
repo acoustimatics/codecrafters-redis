@@ -130,9 +130,9 @@ impl Engine {
             return Object::new_error(b"RPUSH requires a key argument");
         };
 
-        let Some(element) = elements.pop_front() else {
+        if elements.is_empty() {
             return Object::new_error(b"RPUSH requires an element argument");
-        };
+        }
 
         let entry = self.data.entry(key)
             .or_insert(EntryBuilder::new(Object::new_array()).build());
@@ -141,7 +141,9 @@ impl Engine {
             return Object::new_error(b"object at key is not an array");
         };
 
-        array.items.push(element);
+        while let Some(element) = elements.pop_front() {
+            array.items.push(element);
+        }
 
         Object::Integer(array.items.len() as i64)
     }
