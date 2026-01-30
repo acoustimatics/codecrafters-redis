@@ -23,10 +23,14 @@ pub enum Object {
 
 impl Object {
     /// Create a new array object from a vector.
-    pub fn new_array() -> Self {
-        let items = Vec::new();
+    pub fn new_array(items: Vec<Object>) -> Self {
         let array = ObjectArray { items };
         Object::Array(array)
+    }
+
+    /// Create a new empty array.
+    pub fn new_empty_array() -> Self {
+        Self::new_array(Vec::new())
     }
 
     /// Create a new error object from a byte slice.
@@ -45,6 +49,17 @@ impl Object {
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub struct ObjectArray {
     pub items: Vec<Object>,
+}
+
+impl ObjectArray {
+    fn lrange(&self, start: usize, stop: usize) -> &[Object] {
+        let len = self.items.len();
+        if start >= len || start > stop {
+            return &self.items[0..0];
+        }
+        let stop = std::cmp::min(stop, len - 1) as usize;
+        &self.items[start..=stop]
+    }
 }
 
 /// An entry value in the data table.
@@ -121,8 +136,45 @@ impl Engine {
             b"ECHO" => self.do_echo(elements),
             b"RPUSH" => self.do_rpush(elements),
             b"SET" => self.do_set(elements),
+            b"LRANGE" => self.do_lrange(elements),
             _ => Object::new_error(b"unknown command"),
         }
+    }
+
+    fn do_lrange(&mut self, mut elements: VecDeque<Object>) -> Object {
+        let Some(key) = elements.pop_front() else {
+            return Object::new_error(b"LRANGE requires a key argument");
+        };
+
+        let Some(Object::BulkString(Some(start))) = elements.pop_front() else {
+            return Object::new_error(b"LRANGE requires a start index");
+        };
+
+        let Some(Object::BulkString(Some(stop))) = elements.pop_front() else {
+            return Object::new_error(b"LRANGE requires a stop index");
+        };
+
+        let Some(start) = parse_usize(&start) else {
+            return Object::new_error(b"couldn't parse start as an integer");
+        };
+
+        let Some(stop) = parse_usize(&stop) else {
+            return Object::new_error(b"couldn't parse stop as an integer");
+        };
+
+        let Some(entry) = self.data.get(&key) else {
+            return Object::new_empty_array();
+        };
+
+        // TODO: Check for expiration?
+
+        let Object::Array(array) = &entry.value else {
+            return Object::new_empty_array();
+        };
+
+        let array = array.lrange(start, stop).iter().map(|obj| obj.clone()).collect();
+
+        Object::new_array(array)
     }
 
     fn do_rpush(&mut self, mut elements: VecDeque<Object>) -> Object {
@@ -135,7 +187,7 @@ impl Engine {
         }
 
         let entry = self.data.entry(key)
-            .or_insert(EntryBuilder::new(Object::new_array()).build());
+            .or_insert(EntryBuilder::new(Object::new_empty_array()).build());
 
         let Object::Array(array) = &mut entry.value  else {
             return Object::new_error(b"object at key is not an array");
@@ -241,4 +293,17 @@ fn convert_to_ascii_uppercase(s: &mut [u8]) {
     for i in 0..s.len() {
         s[i] = s[i].to_ascii_uppercase();
     }
+}
+
+fn parse_usize(s: &[u8]) -> Option<usize> {
+    let mut n = 0;
+    for b in s.iter() {
+        if b'0' <= *b && *b <= b'9' {
+            let d = (b - b'0') as usize;
+            n = 10 * n + d;
+        } else {
+            return None;
+        }
+    }
+    Some(n)
 }

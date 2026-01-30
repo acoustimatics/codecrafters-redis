@@ -48,9 +48,34 @@ pub fn deserialize_object<T: io::Read>(
     match state.current(stream)? {
         Some(b'$') => deserialize_bulk_string(state, stream),
         Some(b'*') => deserialize_array(state, stream),
+        Some(b':') => deserialize_integer(state, stream),
         Some(b) => Err(anyhow!("byte is not a data type: {:x}", b)),
         None => Err(anyhow!("unexpected end of state")),
     }
+}
+
+/// Deserializes an interger object.
+fn deserialize_integer<T: io::Read>(
+    input: &mut ReadState,
+    stream: &mut T,
+) -> anyhow::Result<engine::Object> {
+    assert_eq!(input.current(stream)?, Some(b':'));
+    input.advance();
+    let sign = match input.current(stream)? {
+        Some(c) if c == b'+' || c == b'-' => {
+            input.advance();
+            Some(c)
+        }
+        _ => None,
+    };
+    let value = read_digits(input, stream)?;
+    expect_delimiter(input, stream)?;
+    let value = parse_i64(&value)?;
+    let value = match sign {
+        Some(b'-') => -value,
+        _ => value,
+    };
+    Ok(engine::Object::Integer(value))
 }
 
 /// Deserializes an array object.
@@ -131,6 +156,16 @@ fn parse_u32(s: &str) -> anyhow::Result<u32> {
         Ok(i) => Ok(i),
         Err(_) => Err(anyhow!(
             "couldn't parse `{s}` as an unsigned 32 bit integer"
+        )),
+    }
+}
+
+/// Parse string as an `i64` with a custom error result.
+fn parse_i64(s: &str) -> anyhow::Result<i64> {
+    match s.parse() {
+        Ok(i) => Ok(i),
+        Err(_) => Err(anyhow!(
+            "couldn't parse `{s}` as a signed 64 bit integer"
         )),
     }
 }
