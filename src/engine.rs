@@ -160,8 +160,27 @@ impl Engine {
             b"LPUSH" => self.do_lpush(elements),
             b"SET" => self.do_set(elements),
             b"LRANGE" => self.do_lrange(elements),
+            b"LLEN" => self.do_llen(elements),
             _ => Object::new_error(b"unknown command"),
         }
+    }
+
+    fn do_llen(&mut self, mut elements: VecDeque<Object>) -> Object {
+        let Some(key) = elements.pop_front() else {
+            return Object::new_error(b"LLEN requires a key argument");
+        };
+
+        let Some(entry) = self.data.get(&key) else {
+            return Object::Integer(0);
+        };
+
+        // TODO: Check for expiration?
+
+        let Object::Array(array) = &entry.value else {
+            return Object::Integer(0);
+        };
+
+        Object::Integer(array.items.len() as i64)
     }
 
     fn do_lrange(&mut self, mut elements: VecDeque<Object>) -> Object {
