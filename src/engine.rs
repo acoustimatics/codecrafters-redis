@@ -62,12 +62,12 @@ impl ObjectArray {
 
         // Negative indexes offset from end of the array.
         let start = if start < 0 {
-           std::cmp::max(0, len as i64 + start)
+            std::cmp::max(0, len as i64 + start)
         } else {
             start
         } as usize;
         let stop = if stop < 0 {
-           std::cmp::max(0, len as i64 + stop)
+            std::cmp::max(0, len as i64 + stop)
         } else {
             stop
         } as usize;
@@ -214,7 +214,11 @@ impl Engine {
             return Object::new_empty_array();
         };
 
-        let array = array.lrange(start, stop).iter().map(|obj| obj.clone()).collect();
+        let array = array
+            .lrange(start, stop)
+            .iter()
+            .map(|obj| obj.clone())
+            .collect();
 
         Object::new_array(array)
     }
@@ -228,10 +232,12 @@ impl Engine {
             return Object::new_error(b"RPUSH requires an element argument");
         }
 
-        let entry = self.data.entry(key)
+        let entry = self
+            .data
+            .entry(key)
             .or_insert(EntryBuilder::new(Object::new_empty_array()).build());
 
-        let Object::Array(array) = &mut entry.value  else {
+        let Object::Array(array) = &mut entry.value else {
             return Object::new_error(b"object at key is not an array");
         };
 
@@ -251,10 +257,12 @@ impl Engine {
             return Object::new_error(b"LPUSH requires an element argument");
         }
 
-        let entry = self.data.entry(key)
+        let entry = self
+            .data
+            .entry(key)
             .or_insert(EntryBuilder::new(Object::new_empty_array()).build());
 
-        let Object::Array(array) = &mut entry.value  else {
+        let Object::Array(array) = &mut entry.value else {
             return Object::new_error(b"object at key is not an array");
         };
 

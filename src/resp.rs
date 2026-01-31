@@ -164,9 +164,7 @@ fn parse_u32(s: &str) -> anyhow::Result<u32> {
 fn parse_i64(s: &str) -> anyhow::Result<i64> {
     match s.parse() {
         Ok(i) => Ok(i),
-        Err(_) => Err(anyhow!(
-            "couldn't parse `{s}` as a signed 64 bit integer"
-        )),
+        Err(_) => Err(anyhow!("couldn't parse `{s}` as a signed 64 bit integer")),
     }
 }
 
