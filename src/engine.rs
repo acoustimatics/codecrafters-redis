@@ -52,12 +52,34 @@ pub struct ObjectArray {
 }
 
 impl ObjectArray {
-    fn lrange(&self, start: usize, stop: usize) -> &[Object] {
+    fn lrange(&self, start: i64, stop: i64) -> &[Object] {
         let len = self.items.len();
+
+        // Check for empty array
+        if len == 0 {
+            return &self.items[0..0];
+        }
+
+        // Negative indexes offset from end of the array.
+        let start = if start < 0 {
+           std::cmp::max(0, len as i64 + start)
+        } else {
+            start
+        } as usize;
+        let stop = if stop < 0 {
+           std::cmp::max(0, len as i64 + stop)
+        } else {
+            stop
+        } as usize;
+
+        // Check for start within range.
         if start >= len || start > stop {
             return &self.items[0..0];
         }
-        let stop = std::cmp::min(stop, len - 1) as usize;
+
+        // Check for stop within range.
+        let stop = std::cmp::min(stop, len - 1);
+
         &self.items[start..=stop]
     }
 }
@@ -154,11 +176,11 @@ impl Engine {
             return Object::new_error(b"LRANGE requires a stop index");
         };
 
-        let Some(start) = parse_usize(&start) else {
+        let Some(start) = parse_i64(&start) else {
             return Object::new_error(b"couldn't parse start as an integer");
         };
 
-        let Some(stop) = parse_usize(&stop) else {
+        let Some(stop) = parse_i64(&stop) else {
             return Object::new_error(b"couldn't parse stop as an integer");
         };
 
@@ -295,15 +317,35 @@ fn convert_to_ascii_uppercase(s: &mut [u8]) {
     }
 }
 
-fn parse_usize(s: &[u8]) -> Option<usize> {
+/// Parse an i64 from a string of bytes. To parse correctly the string
+/// must be this in ASCII: (+|-)?\d+
+fn parse_i64(s: &[u8]) -> Option<i64> {
+    if s.is_empty() {
+        return None;
+    }
+
+    let (is_negative, s) = match s[0] {
+        b'-' => (true, &s[1..]),
+        b'+' => (false, &s[1..]),
+        _ => (false, s),
+    };
+
+    if s.is_empty() {
+        return None;
+    }
+
     let mut n = 0;
-    for b in s.iter() {
+    for b in s {
         if b'0' <= *b && *b <= b'9' {
-            let d = (b - b'0') as usize;
-            n = 10 * n + d;
+            n = 10 * n + (b - b'0') as i64;
         } else {
             return None;
         }
     }
+
+    if is_negative {
+        n = -n;
+    }
+
     Some(n)
 }
