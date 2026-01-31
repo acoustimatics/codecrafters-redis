@@ -171,6 +171,16 @@ impl Engine {
             return Object::new_error(b"LLEN requires a key argument");
         };
 
+        let count = match elements.pop_front() {
+            Some(Object::BulkString(Some(count))) => parse_usize(&count),
+            None => Some(1),
+            _ => None,
+        };
+
+        let Some(mut count) = count else {
+            return Object::new_error(b"invalid count");
+        };
+
         let Some(entry) = self.data.get_mut(&key) else {
             return Object::BulkString(None);
         };
@@ -185,7 +195,18 @@ impl Engine {
             return Object::BulkString(None);
         }
 
-        array.items.remove(0)
+        if count == 1 {
+            return array.items.remove(0);
+        }
+
+        let mut popped = Vec::new();
+        while count > 0 {
+            let item = array.items.remove(0);
+            popped.push(item);
+            count -= 1;
+        }
+
+        Object::new_array(popped)
     }
 
     fn do_llen(&mut self, mut elements: VecDeque<Object>) -> Object {
@@ -419,6 +440,25 @@ fn parse_i64(s: &[u8]) -> Option<i64> {
 
     if is_negative {
         n = -n;
+    }
+
+    Some(n)
+}
+
+/// Parse an usize from a string of bytes. To parse correctly the string
+/// must be this in ASCII: \d+
+fn parse_usize(s: &[u8]) -> Option<usize> {
+    if s.is_empty() {
+        return None;
+    }
+
+    let mut n = 0;
+    for b in s {
+        if b'0' <= *b && *b <= b'9' {
+            n = 10 * n + (b - b'0') as usize;
+        } else {
+            return None;
+        }
     }
 
     Some(n)
