@@ -157,6 +157,7 @@ impl Engine {
             b"PING" => Object::new_simple_string(b"PONG"),
             b"ECHO" => self.do_echo(elements),
             b"RPUSH" => self.do_rpush(elements),
+            b"LPUSH" => self.do_lpush(elements),
             b"SET" => self.do_set(elements),
             b"LRANGE" => self.do_lrange(elements),
             _ => Object::new_error(b"unknown command"),
@@ -217,6 +218,29 @@ impl Engine {
 
         while let Some(element) = elements.pop_front() {
             array.items.push(element);
+        }
+
+        Object::Integer(array.items.len() as i64)
+    }
+
+    fn do_lpush(&mut self, mut elements: VecDeque<Object>) -> Object {
+        let Some(key) = elements.pop_front() else {
+            return Object::new_error(b"LPUSH requires a key argument");
+        };
+
+        if elements.is_empty() {
+            return Object::new_error(b"LPUSH requires an element argument");
+        }
+
+        let entry = self.data.entry(key)
+            .or_insert(EntryBuilder::new(Object::new_empty_array()).build());
+
+        let Object::Array(array) = &mut entry.value  else {
+            return Object::new_error(b"object at key is not an array");
+        };
+
+        while let Some(element) = elements.pop_front() {
+            array.items.insert(0, element);
         }
 
         Object::Integer(array.items.len() as i64)
