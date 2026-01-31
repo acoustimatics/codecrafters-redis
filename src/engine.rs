@@ -161,8 +161,31 @@ impl Engine {
             b"SET" => self.do_set(elements),
             b"LRANGE" => self.do_lrange(elements),
             b"LLEN" => self.do_llen(elements),
+            b"LPOP" => self.do_lpop(elements),
             _ => Object::new_error(b"unknown command"),
         }
+    }
+
+    fn do_lpop(&mut self, mut elements: VecDeque<Object>) -> Object {
+        let Some(key) = elements.pop_front() else {
+            return Object::new_error(b"LLEN requires a key argument");
+        };
+
+        let Some(entry) = self.data.get_mut(&key) else {
+            return Object::BulkString(None);
+        };
+
+        // TODO: Check for expiration?
+
+        let Object::Array(array) = &mut entry.value else {
+            return Object::BulkString(None);
+        };
+
+        if array.items.is_empty() {
+            return Object::BulkString(None);
+        }
+
+        array.items.remove(0)
     }
 
     fn do_llen(&mut self, mut elements: VecDeque<Object>) -> Object {
